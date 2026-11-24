@@ -31,7 +31,8 @@ Los snapshots se alternan y todo se valida con CRC32.
 cargo build --release
 ```
 
-En Linux `minifb` necesita las cabeceras de X11/Wayland.
+En Linux `minifb` necesita las cabeceras de X11/Wayland y `rodio` las de ALSA
+(`libasound2-dev` en Debian/Ubuntu, `alsa-lib-devel` en Fedora).
 
 ## Generar y ejecutar
 
@@ -41,7 +42,10 @@ roms/test-capsule.exe          # continúa donde se dejó
 roms/test-capsule.exe --reset  # vuelve al estado de fábrica
 ```
 
-Teclas: `1234 / qwer / asdf / zxcv`. `Escape` cierra y guarda.
+Teclas: `1234 / qwer / asdf / zxcv`. `Escape` cierra y guarda. Cuando el sound
+timer del Chip8 es mayor que cero suena un tono de 440 Hz; se apaga en cuanto
+llega a cero. Si no hay dispositivo de audio, el emulador sigue corriendo sin
+sonido.
 
 ## E/S de disco desde el ROM
 
@@ -76,7 +80,6 @@ el snapshot sigue siendo válido tras reabrir.
 
 - El patrón auto-copia + exec + reescritura dispara falsos positivos de
   antivirus. Es inherente a "exe autocontenido" en Windows y Linux.
-- Sin audio: `minifb` solo da vídeo y teclado.
 - El patcher PE respeta `VirtualSize` (debe cuadrar con la VA de la siguiente
   sección) y solo modifica `SizeOfRawData`.
 - Un mutex nominal evita dos instancias del mismo juego a la vez.

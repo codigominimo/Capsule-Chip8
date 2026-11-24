@@ -1,3 +1,4 @@
+use capsule_core::audio::Beeper;
 use capsule_core::capsule::CapsuleFile;
 use capsule_core::chip8::{Chip8, MachineState};
 use capsule_core::{launcher, lock, pack};
@@ -95,6 +96,13 @@ fn run_emulator(path: &Path, reset: bool) {
         }
     };
     window.set_target_fps(60);
+    let mut beeper = match Beeper::new() {
+        Ok(b) => Some(b),
+        Err(e) => {
+            eprintln!("audio no disponible, se continúa sin sonido: {e}");
+            None
+        }
+    };
     let mut screen = vec![0u32; W * H];
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
@@ -110,12 +118,18 @@ fn run_emulator(path: &Path, reset: bool) {
             chip8.step();
         }
         chip8.tick_timers();
+        if let Some(beeper) = &mut beeper {
+            beeper.set(chip8.state.sound > 0);
+        }
         chip8.framebuffer(&mut screen);
         if let Err(e) = window.update_with_buffer(&screen, W, H) {
             eprintln!("error de vídeo: {e}");
             break;
         }
         chip8.disk.checkpoint(&chip8.state);
+    }
+    if let Some(beeper) = &mut beeper {
+        beeper.set(false);
     }
     chip8.disk.checkpoint(&chip8.state);
 }

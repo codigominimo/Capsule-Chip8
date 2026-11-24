@@ -1,3 +1,4 @@
+pub mod audio;
 pub mod binary;
 pub mod capsule;
 pub mod chip8;
