@@ -1,6 +1,6 @@
 use capsule_core::audio::Beeper;
 use capsule_core::capsule::CapsuleFile;
-use capsule_core::chip8::{Chip8, MachineState};
+use capsule_core::chip8::{self, Chip8, MachineState};
 use capsule_core::{launcher, lock, pack};
 use minifb::{Key, Window, WindowOptions};
 use std::path::{Path, PathBuf};
@@ -11,9 +11,8 @@ use std::path::{Path, PathBuf};
 #[unsafe(link_section = ".capsule")]
 static CAPSULE_RESERVED: [u8; 16384] = [0; 16384];
 
-const SCALE: usize = 10;
-const W: usize = 64 * SCALE;
-const H: usize = 32 * SCALE;
+const W: usize = chip8::SCREEN_W * chip8::SCALE;
+const H: usize = chip8::SCREEN_H * chip8::SCALE;
 
 fn map_key(k: Key) -> Option<usize> {
     Some(match k {

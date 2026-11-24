@@ -1,5 +1,11 @@
 //! Intérprete CHIP-8 estándar, sin extensiones de E/S.
 
+pub const SCREEN_W: usize = 64;
+pub const SCREEN_H: usize = 32;
+pub const SCALE: usize = 10;
+
+const COLOR_ON: u32 = 0x00f0_f0f0;
+
 const FONTS: [u8; 80] = [
     0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
     0x20, 0x60, 0x20, 0x20, 0x70, // 1
@@ -30,7 +36,7 @@ pub struct MachineState {
     pub delay: u8,
     pub sound: u8,
     pub ram: [u8; 4096],
-    pub gfx: [bool; 64 * 32],
+    pub gfx: [bool; SCREEN_W * SCREEN_H],
 }
 
 impl MachineState {
@@ -44,7 +50,7 @@ impl MachineState {
             delay: 0,
             sound: 0,
             ram: [0; 4096],
-            gfx: [false; 64 * 32],
+            gfx: [false; SCREEN_W * SCREEN_H],
         };
         s.ram[0x050..0x050 + FONTS.len()].copy_from_slice(&FONTS);
         let n = rom.len().min(4096 - 0x200);
@@ -92,9 +98,25 @@ impl Chip8 {
         }
     }
 
+    /// Convierte la pantalla lógica de 64x32 en un buffer escalado 10x.
     pub fn framebuffer(&self, out: &mut [u32]) {
-        for (dst, on) in out.iter_mut().zip(self.state.gfx.iter()) {
-            *dst = if *on { 0x00f0f0f0 } else { 0x00000000 };
+        let scaled_w = SCREEN_W * SCALE;
+        let scaled_h = SCREEN_H * SCALE;
+        assert!(
+            out.len() >= scaled_w * scaled_h,
+            "buffer de vídeo demasiado pequeño"
+        );
+        out.fill(0);
+        for y in 0..SCREEN_H {
+            for x in 0..SCREEN_W {
+                if !self.state.gfx[y * SCREEN_W + x] {
+                    continue;
+                }
+                for sy in 0..SCALE {
+                    let row = (y * SCALE + sy) * scaled_w + x * SCALE;
+                    out[row..row + SCALE].fill(COLOR_ON);
+                }
+            }
         }
     }
 
@@ -270,5 +292,41 @@ impl Chip8 {
             _ => {}
         }
         self.state.pc = next;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn framebuffer_scales_all_logical_pixels() {
+        let mut state = MachineState::new(&[]);
+        let w = SCREEN_W * SCALE;
+        state.gfx[0] = true;
+        state.gfx[SCREEN_W - 1] = true;
+        state.gfx[(SCREEN_H - 1) * SCREEN_W] = true;
+
+        let mut out = vec![0u32; w * SCREEN_H * SCALE];
+        Chip8::new(state).framebuffer(&mut out);
+
+        assert_eq!(out[0], COLOR_ON);
+        assert_eq!(out[SCALE - 1], COLOR_ON);
+        assert_eq!(out[w * SCALE], 0);
+
+        let top_right = (SCREEN_W - 1) * SCALE;
+        assert_eq!(out[top_right], COLOR_ON);
+        assert_eq!(out[top_right + SCALE - 1], COLOR_ON);
+        assert_eq!(out[top_right + w * SCALE], 0);
+
+        let last_row = (SCREEN_H * SCALE - 1) * w;
+        assert_eq!(out[last_row], COLOR_ON);
+        assert_eq!(out[last_row + SCALE - 1], COLOR_ON);
+        assert_eq!(out[last_row - w * SCALE], 0);
+
+        assert_eq!(
+            out.iter().filter(|&&c| c == COLOR_ON).count(),
+            3 * SCALE * SCALE
+        );
     }
 }
