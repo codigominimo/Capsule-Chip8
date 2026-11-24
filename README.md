@@ -19,8 +19,8 @@ queda libre para reescribirse. `capsule-chip8` es esa misma imagen, así que no
 hay plantillas ni binarios auxiliares: solo un exe.
 
 El juego generado lleva una sección inyectada, `.capsule`, con la cabecera
-`CAPSULE1`, el ROM y dos snapshots de estado (A/B). Los snapshots se alternan y
-todo se valida con CRC32.
+`CAPSULE1` (versión 3), el mapa de controles, el ROM y dos snapshots de estado
+(A/B). Los snapshots se alternan y todo se valida con CRC32.
 
 ## Compilar
 
@@ -42,10 +42,27 @@ roms/airplane.exe --reset  # vuelve al estado de fábrica
 En Windows el exe generado es una aplicación GUI: al abrirlo no aparece una
 ventana de terminal. `--pack` y la ayuda siguen escribiendo en la consola.
 
-Teclas: `1234 / qwer / asdf / zxcv`. `Escape` cierra y guarda. Cuando el sound
-timer del Chip8 es mayor que cero suena un tono de 440 Hz; se apaga en cuanto
-llega a cero. Si no hay dispositivo de audio, el emulador sigue corriendo sin
-sonido.
+Teclas por defecto: `1234 / qwer / asdf / zxcv`. `Escape` cierra y guarda.
+Pulsa `F1` dentro del juego para abrir la pantalla de controles:
+
+- `Izquierda`/`Derecha` eligen una de las 16 teclas CHIP-8.
+- `Arriba`/`Abajo` recorren las teclas anfitrionas; también puedes pulsar
+  directamente la tecla que quieres asignar (`0-9`, `A-Z`, espacio, `Tab`,
+  `Shift`, `Ctrl`, `Alt`, `F2`-`F12`, signos y numérico). Las flechas, `F1`,
+  `Enter` y `Escape` se usan para navegar y no se asignan pulsándolas; para
+  asignar una flecha, usa `Arriba`/`Abajo` hasta que aparezca `UP`, `DN`, `LT`
+  o `RT`.
+- Si la tecla ya estaba asignada a otra ranura, se intercambian.
+- `F1` o `Enter` guarda y vuelve al juego. `F1`, `Enter` y `Escape` no se
+  pueden asignar.
+
+El mapa se guarda en el propio exe, en posiciones fijas de la cabecera
+`CAPSULE1`: 16 bytes en el offset 36 (uno por tecla CHIP-8) y su CRC32 en el
+offset 52. `--reset` no borra los controles.
+
+Cuando el sound timer del Chip8 es mayor que cero suena un tono de 440 Hz; se
+apaga en cuanto llega a cero. Si no hay dispositivo de audio, el emulador sigue
+corriendo sin sonido.
 
 ## Persistencia
 

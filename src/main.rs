@@ -3,8 +3,9 @@
 use capsule_core::audio::Beeper;
 use capsule_core::capsule::CapsuleFile;
 use capsule_core::chip8::{self, Chip8, MachineState};
+use capsule_core::keymap::{self, Keymap};
 use capsule_core::{launcher, lock, pack};
-use minifb::{Key, Window, WindowOptions};
+use minifb::{Key, KeyRepeat, Window, WindowOptions};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -22,6 +23,32 @@ const CYCLES_PER_SECOND: f64 = 600.0;
 const TIMER_TICKS_PER_SECOND: f64 = 60.0;
 const MAX_FRAME_SECONDS: f64 = 0.25;
 
+const UI_BG: u32 = 0x0000_0000;
+const UI_ON: u32 = 0x00f0_f0f0;
+const UI_DIM: u32 = 0x0070_7070;
+const UI_SEL: u32 = 0x00f0_c050;
+const UI_PANEL: u32 = 0x0020_2020;
+
+const HEX: [&str; 16] = [
+    "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "A", "B", "C", "D", "E", "F",
+];
+
+// Orden físico del teclado CHIP-8: 1 2 3 C / 4 5 6 D / 7 8 9 E / A 0 B F.
+const KEY_ORDER: [usize; 16] = [1, 2, 3, 12, 4, 5, 6, 13, 7, 8, 9, 14, 10, 0, 11, 15];
+
+// Tipografía 3x5 para 0-9 y A-Z en posiciones fijas.
+const GLYPHS: [[u8; 5]; 36] = [
+    [7, 5, 5, 5, 7], [2, 6, 2, 2, 7], [7, 1, 7, 4, 7], [7, 1, 7, 1, 7],
+    [5, 5, 7, 1, 1], [7, 4, 7, 1, 7], [7, 4, 7, 5, 7], [7, 1, 2, 2, 2],
+    [7, 5, 7, 5, 7], [7, 5, 7, 1, 7], [2, 5, 7, 5, 5], [6, 5, 6, 5, 6],
+    [7, 4, 4, 4, 7], [6, 5, 5, 5, 6], [7, 4, 6, 4, 7], [7, 4, 6, 4, 4],
+    [7, 4, 5, 5, 7], [5, 5, 7, 5, 5], [7, 2, 2, 2, 7], [1, 1, 1, 5, 7],
+    [5, 5, 6, 5, 5], [4, 4, 4, 4, 7], [5, 7, 7, 5, 5], [5, 7, 7, 7, 5],
+    [7, 5, 5, 5, 7], [7, 5, 7, 4, 4], [7, 5, 5, 7, 1], [7, 5, 7, 6, 5],
+    [7, 4, 7, 1, 7], [7, 2, 2, 2, 2], [5, 5, 5, 5, 7], [5, 5, 5, 5, 2],
+    [5, 5, 7, 7, 5], [5, 5, 2, 5, 5], [5, 5, 2, 2, 2], [7, 1, 2, 4, 7],
+];
+
 /// `--pack` y la ayuda se ejecutan desde un terminal; el juego, no.
 /// El binario es subsistema Windows, así que hay que recuperar la consola
 /// del padre solo en esos casos.
@@ -38,28 +65,6 @@ fn ensure_console() {
             AllocConsole();
         }
     }
-}
-
-fn map_key(k: Key) -> Option<usize> {
-    Some(match k {
-        Key::Key1 => 0x1,
-        Key::Key2 => 0x2,
-        Key::Key3 => 0x3,
-        Key::Key4 => 0xc,
-        Key::Q => 0x4,
-        Key::W => 0x5,
-        Key::E => 0x6,
-        Key::R => 0xd,
-        Key::A => 0x7,
-        Key::S => 0x8,
-        Key::D => 0x9,
-        Key::F => 0xe,
-        Key::Z => 0xa,
-        Key::X => 0x0,
-        Key::C => 0xb,
-        Key::V => 0xf,
-        _ => return None,
-    })
 }
 
 fn flag(args: &[String], name: &str) -> Option<String> {
@@ -86,6 +91,113 @@ fn do_pack(args: &[String]) {
     }
 }
 
+fn fill_rect(out: &mut [u32], x: usize, y: usize, w: usize, h: usize, color: u32) {
+    for yy in y..(y + h).min(H) {
+        let start = yy * W;
+        for xx in x..(x + w).min(W) {
+            out[start + xx] = color;
+        }
+    }
+}
+
+fn border_rect(out: &mut [u32], x: usize, y: usize, w: usize, h: usize, color: u32) {
+    fill_rect(out, x, y, w, 1, color);
+    fill_rect(out, x, y + h - 1, w, 1, color);
+    fill_rect(out, x, y, 1, h, color);
+    fill_rect(out, x + w - 1, y, 1, h, color);
+}
+
+fn glyph(ch: char) -> Option<&'static [u8]> {
+    let idx = match ch {
+        '0'..='9' => ch as usize - '0' as usize,
+        'A'..='Z' => 10 + ch as usize - 'A' as usize,
+        _ => return None,
+    };
+    GLYPHS.get(idx).map(|g| g.as_slice())
+}
+
+fn draw_text(out: &mut [u32], text: &str, x: usize, y: usize, scale: usize, color: u32) {
+    let mut cx = x;
+    for ch in text.chars() {
+        if let Some(g) = glyph(ch) {
+            for row in 0..5 {
+                for col in 0..3 {
+                    if g[row] & (1 << (2 - col)) != 0 {
+                        fill_rect(
+                            out,
+                            cx + col * scale,
+                            y + row * scale,
+                            scale,
+                            scale,
+                            color,
+                        );
+                    }
+                }
+            }
+        }
+        cx += 4 * scale;
+    }
+}
+
+fn draw_config(out: &mut [u32], keymap: &Keymap, selected: usize) {
+    out.fill(UI_BG);
+    draw_text(out, "CONTROLES", 40, 18, 4, UI_ON);
+
+    let (x0, y0, cw, ch, gap) = (40usize, 70usize, 132usize, 48usize, 8usize);
+    for (pos, &slot) in KEY_ORDER.iter().enumerate() {
+        let x = x0 + (pos % 4) * (cw + gap);
+        let y = y0 + (pos / 4) * (ch + gap);
+        let is_selected = slot == selected;
+        let color = if is_selected { UI_SEL } else { UI_ON };
+        fill_rect(out, x, y, cw, ch, if is_selected { UI_PANEL } else { UI_BG });
+        border_rect(out, x, y, cw, ch, if is_selected { UI_SEL } else { UI_DIM });
+        draw_text(out, HEX[slot], x + 10, y + 14, 3, color);
+        draw_text(out, keymap.label(slot), x + 64, y + 14, 3, color);
+    }
+    draw_text(out, "F1 SALIR IZQ DER ELEGIR ARR ABA CAMBIA", 40, 288, 2, UI_DIM);
+}
+
+/// Devuelve `true` cuando se debe salir de la configuración.
+/// `f1_exit` es un flanco de subida distinto del que abrió la pantalla.
+fn handle_config(
+    window: &Window,
+    keymap: &mut Keymap,
+    selected: &mut usize,
+    file: &mut CapsuleFile,
+    f1_exit: bool,
+) -> bool {
+    if window.is_key_pressed(Key::Left, KeyRepeat::Yes) {
+        *selected = (*selected + 15) % 16;
+    }
+    if window.is_key_pressed(Key::Right, KeyRepeat::Yes) {
+        *selected = (*selected + 1) % 16;
+    }
+    if window.is_key_pressed(Key::Up, KeyRepeat::Yes) {
+        keymap.cycle(*selected, -1);
+        file.set_keymap(keymap);
+    }
+    if window.is_key_pressed(Key::Down, KeyRepeat::Yes) {
+        keymap.cycle(*selected, 1);
+        file.set_keymap(keymap);
+    }
+    for id in 0..keymap::HOST_KEY_COUNT as u8 {
+        let key = keymap::key_from_id(id).expect("id de tecla válido");
+        if matches!(
+            key,
+            Key::Left | Key::Right | Key::Up | Key::Down | Key::F1 | Key::Enter | Key::Escape
+        ) {
+            continue;
+        }
+        if window.is_key_pressed(key, KeyRepeat::No) {
+            keymap.assign(*selected, id);
+            file.set_keymap(keymap);
+            *selected = (*selected + 1) % 16;
+            break;
+        }
+    }
+    f1_exit || window.is_key_pressed(Key::Enter, KeyRepeat::No)
+}
+
 fn run_emulator(path: &Path, reset: bool) {
     let _lock = match lock::InstanceLock::acquire(path) {
         Ok(l) => l,
@@ -110,6 +222,11 @@ fn run_emulator(path: &Path, reset: bool) {
     // Así `--reset` queda guardado aunque se cierre antes del primer frame.
     file.checkpoint(&state);
     let mut chip8 = Chip8::new(state);
+    let mut keymap = file.load_keymap();
+    let mut configuring = false;
+    let mut config_just_opened = false;
+    let mut selected = 0usize;
+    let mut f1_held = false;
 
     let mut window = match Window::new("Capsule-CHIP8", W, H, WindowOptions::default()) {
         Ok(w) => w,
@@ -133,41 +250,69 @@ fn run_emulator(path: &Path, reset: bool) {
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
         let now = Instant::now();
-        let dt = now.duration_since(last_frame).as_secs_f64().min(MAX_FRAME_SECONDS);
+        let dt = now
+            .duration_since(last_frame)
+            .as_secs_f64()
+            .min(MAX_FRAME_SECONDS);
         last_frame = now;
-        cycle_acc += dt * CYCLES_PER_SECOND;
-        tick_acc += dt * TIMER_TICKS_PER_SECOND;
 
-        for i in 0..16 {
-            chip8.set_key(i, false);
+        let f1_down = window.is_key_down(Key::F1);
+        let f1_pressed = f1_down && !f1_held;
+        f1_held = f1_down;
+
+        if f1_pressed && !configuring {
+            configuring = true;
+            config_just_opened = true;
         }
-        for key in window.get_keys() {
-            if let Some(idx) = map_key(key) {
-                chip8.set_key(idx, true);
+
+        if configuring {
+            let f1_exit = f1_pressed && !config_just_opened;
+            config_just_opened = false;
+            if handle_config(&window, &mut keymap, &mut selected, &mut file, f1_exit) {
+                configuring = false;
             }
-        }
+            if let Some(beeper) = &mut beeper {
+                beeper.set(false);
+            }
+            draw_config(&mut screen, &keymap, selected);
+        } else {
+            cycle_acc += dt * CYCLES_PER_SECOND;
+            tick_acc += dt * TIMER_TICKS_PER_SECOND;
 
-        let cycles = cycle_acc.floor() as usize;
-        cycle_acc -= cycles as f64;
-        for _ in 0..cycles {
-            chip8.step();
-        }
+            for i in 0..16 {
+                chip8.set_key(i, false);
+            }
+            for i in 0..16 {
+                if let Some(key) = keymap.host_key(i) {
+                    if window.is_key_down(key) {
+                        chip8.set_key(i, true);
+                    }
+                }
+            }
 
-        // El tono se revisa en cada tick: si el sound timer llega a cero a
-        // mitad de un frame con pocos fps, el pitido se corta en ese instante.
-        if let Some(beeper) = &mut beeper {
-            beeper.set(chip8.state.sound > 0);
-        }
-        let ticks = tick_acc.floor() as usize;
-        tick_acc -= ticks as f64;
-        for _ in 0..ticks {
-            chip8.tick_timers();
+            let cycles = cycle_acc.floor() as usize;
+            cycle_acc -= cycles as f64;
+            for _ in 0..cycles {
+                chip8.step();
+            }
+
+            // El tono se revisa en cada tick: si el sound timer llega a cero a
+            // mitad de un frame con pocos fps, el pitido se corta en ese instante.
             if let Some(beeper) = &mut beeper {
                 beeper.set(chip8.state.sound > 0);
             }
+            let ticks = tick_acc.floor() as usize;
+            tick_acc -= ticks as f64;
+            for _ in 0..ticks {
+                chip8.tick_timers();
+                if let Some(beeper) = &mut beeper {
+                    beeper.set(chip8.state.sound > 0);
+                }
+            }
+
+            chip8.framebuffer(&mut screen);
         }
 
-        chip8.framebuffer(&mut screen);
         if let Err(e) = window.update_with_buffer(&screen, W, H) {
             eprintln!("error de vídeo: {e}");
             break;
@@ -205,7 +350,7 @@ fn main() {
     #[cfg(target_os = "windows")]
     ensure_console();
     println!(
-        "capsule-chip8\n\nGenerar una cápsula:\n  {} --pack --rom roms/Airplane.ch8 --out juego.exe\n\nEjecutar una cápsula:\n  juego.exe [--reset]\n",
+        "capsule-chip8\n\nGenerar una cápsula:\n  {} --pack --rom roms/Airplane.ch8 --out juego.exe\n\nEjecutar una cápsula:\n  juego.exe [--reset]  (F1 configura los controles)\n",
         PathBuf::from("capsule-chip8").display()
     );
 }

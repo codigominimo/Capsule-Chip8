@@ -5,11 +5,12 @@
 
 use crate::binary;
 use crate::chip8::MachineState;
+use crate::keymap::Keymap;
 use crc32fast::Hasher;
 use std::path::{Path, PathBuf};
 
 pub const MAGIC: &[u8; 8] = b"CAPSULE1";
-pub const VERSION: u32 = 2;
+pub const VERSION: u32 = 3;
 pub const HEADER_LEN: usize = 64;
 pub const STATE_LEN: usize = 4411;
 
@@ -19,6 +20,9 @@ const H_ROM_LEN: usize = 16;
 const H_STATE_LEN: usize = 20;
 const H_ACTIVE: usize = 24;
 const H_CRC: usize = 32;
+// 16 bytes, uno por tecla CHIP-8, en posición fija; CRC propio en 52.
+const H_KEYMAP: usize = 36;
+const H_KEYMAP_CRC: usize = 52;
 
 const S_PC: usize = 0;
 const S_I: usize = 2;
@@ -98,13 +102,21 @@ pub fn decode_state(b: &[u8]) -> Option<MachineState> {
     Some(s)
 }
 
-fn write_header(b: &mut [u8], rom_len: usize, generation: u32, active: u8) {
+fn write_header(
+    b: &mut [u8],
+    rom_len: usize,
+    generation: u32,
+    active: u8,
+    keymap: &Keymap,
+) {
     b[..8].copy_from_slice(MAGIC);
     put_u32(b, H_VERSION, VERSION);
     put_u32(b, H_GENERATION, generation);
     put_u32(b, H_ROM_LEN, rom_len as u32);
     put_u32(b, H_STATE_LEN, STATE_LEN as u32);
     b[H_ACTIVE] = active;
+    b[H_KEYMAP..H_KEYMAP + 16].copy_from_slice(keymap.as_bytes());
+    put_u32(b, H_KEYMAP_CRC, crc(&b[H_KEYMAP..H_KEYMAP + 16]));
     put_u32(b, H_CRC, crc(&b[..H_CRC]));
 }
 
@@ -113,7 +125,7 @@ pub fn initial_image(rom: &[u8]) -> Vec<u8> {
     let state = MachineState::new(rom);
     let state_bytes = encode_state(&state);
     let mut cap = vec![0u8; HEADER_LEN];
-    write_header(&mut cap, rom.len(), 1, 0);
+    write_header(&mut cap, rom.len(), 1, 0, &Keymap::factory());
     cap.extend_from_slice(rom);
     cap.extend_from_slice(&state_bytes);
     cap.extend_from_slice(&state_bytes);
@@ -130,6 +142,7 @@ pub struct CapsuleFile {
     rom_len: usize,
     generation: u32,
     active: u8,
+    keymap: Keymap,
 }
 
 impl CapsuleFile {
@@ -162,6 +175,12 @@ impl CapsuleFile {
         if active > 1 {
             return Err("cabecera inconsistente".into());
         }
+        let keymap_bytes: &[u8; 16] = h[H_KEYMAP..H_KEYMAP + 16].try_into().unwrap();
+        let keymap = if get_u32(h, H_KEYMAP_CRC) == crc(keymap_bytes) {
+            Keymap::from_bytes(keymap_bytes).unwrap_or_default()
+        } else {
+            Keymap::factory()
+        };
 
         let rom_off = cap_off + HEADER_LEN;
         let state_a = rom_off + rom_len;
@@ -180,6 +199,7 @@ impl CapsuleFile {
             rom_len,
             generation,
             active,
+            keymap,
         })
     }
 
@@ -201,7 +221,20 @@ impl CapsuleFile {
             self.rom_len,
             self.generation,
             self.active,
+            &self.keymap,
         );
+    }
+
+    pub fn load_keymap(&self) -> Keymap {
+        self.keymap
+    }
+
+    /// Guarda el mapa de teclas en su posición fija de la cabecera.
+    pub fn set_keymap(&mut self, keymap: &Keymap) {
+        self.keymap = *keymap;
+        self.generation = self.generation.wrapping_add(1);
+        self.write_header();
+        self.commit_atomic();
     }
 
     /// Guarda el snapshot de la máquina de forma atómica.
@@ -314,4 +347,18 @@ fn replace(src: &Path, dst: &Path) -> std::io::Result<()> {
         }
     }
     std::fs::rename(src, dst)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keymap_lives_at_fixed_header_offsets() {
+        let image = initial_image(&[0x00, 0xE0]);
+        let header = &image[..HEADER_LEN];
+        assert_eq!(get_u32(header, 8), VERSION);
+        assert_eq!(&header[H_KEYMAP..H_KEYMAP + 16], Keymap::factory().as_bytes());
+        assert_eq!(get_u32(header, H_KEYMAP_CRC), crc(&header[H_KEYMAP..H_KEYMAP + 16]));
+    }
 }

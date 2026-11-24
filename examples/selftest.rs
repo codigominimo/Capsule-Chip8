@@ -16,6 +16,10 @@ fn main() {
     let mut file = CapsuleFile::open(&path).expect("no puedo abrir la cápsula");
     println!("ROM: {} bytes", file.rom().len());
 
+    let mut keymap = file.load_keymap();
+    keymap.assign(0, 5);
+    file.set_keymap(&keymap);
+
     let mut chip = Chip8::new(file.load_state());
     chip.state.v[0] = 0xab;
     chip.state.v[0xf] = 0x5a;
@@ -55,11 +59,15 @@ fn main() {
     assert_eq!(s.ram[0x300], 0x7e);
     assert_eq!(s.ram[0x301], 0x11);
 
+    let again = CapsuleFile::open(&path).expect("el mapa de teclas quedó corrupto");
+    assert_eq!(again.load_keymap(), keymap);
+    assert_eq!(again.load_keymap().label(0), "5");
+
     let size_after = std::fs::metadata(&path).unwrap().len();
     assert_eq!(size_before, size_after, "el exe no debe crecer sin disco");
 
     println!(
-        "OK: estado persistido (registros, RAM, stack, timers y GFX), snapshots alternos válidos, exe {} bytes sin cambios",
+        "OK: estado y mapa de teclas persistidos, snapshots alternos válidos, exe {} bytes sin cambios",
         size_after
     );
 }
