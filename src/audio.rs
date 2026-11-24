@@ -15,7 +15,10 @@ pub struct Beeper {
 
 impl Beeper {
     pub fn new() -> Result<Self, String> {
-        let sink = DeviceSinkBuilder::open_default_sink().map_err(|e| e.to_string())?;
+        let mut sink = DeviceSinkBuilder::open_default_sink().map_err(|e| e.to_string())?;
+        // Al cerrar el juego el tono ya se ha detenido: no queremos el aviso
+        // de rodio en stderr.
+        sink.log_on_drop(false);
         let player = Player::connect_new(sink.mixer());
         Ok(Self {
             _sink: sink,

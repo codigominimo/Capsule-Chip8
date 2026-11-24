@@ -34,9 +34,9 @@ En Linux `minifb` necesita las cabeceras de X11/Wayland y `rodio` las de ALSA
 ## Generar y ejecutar
 
 ```sh
-target/release/capsule-chip8 --pack --rom roms/test.ch8 --out roms/test-capsule.exe
-roms/test-capsule.exe          # continúa donde se dejó
-roms/test-capsule.exe --reset  # vuelve al estado de fábrica
+target/release/capsule-chip8 --pack --rom roms/Airplane.ch8 --out roms/airplane.exe
+roms/airplane.exe          # continúa donde se dejó
+roms/airplane.exe --reset  # vuelve al estado de fábrica
 ```
 
 Teclas: `1234 / qwer / asdf / zxcv`. `Escape` cierra y guarda. Cuando el sound
