@@ -46,8 +46,9 @@ sonido.
 
 ## Persistencia
 
-- `CPU/RAM/GFX`: checkpoint al final de cada frame (~60 Hz), al salir y al
-  arrancar con `--reset`.
+- `CPU/RAM/GFX`: checkpoint al final de cada frame, al salir y al arrancar con
+  `--reset`. El reloj de emulación va a ~600 instrucciones/s y los timers a
+  60 Hz mediante un acumulador de tiempo, aunque la ventana no alcance 60 fps.
 - Todo se escribe a un temporal y se reemplaza de forma atómica. Si matas el
   proceso a mitad de escritura, el exe original sigue intacto. Los temporales
   huérfanos (incluidos los `~RF*.TMP` de Windows) se limpian al arrancar.

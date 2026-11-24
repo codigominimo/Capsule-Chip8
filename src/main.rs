@@ -4,6 +4,7 @@ use capsule_core::chip8::{self, Chip8, MachineState};
 use capsule_core::{launcher, lock, pack};
 use minifb::{Key, Window, WindowOptions};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 // Espacio reservado para que el linker cree la sección. `--pack` la reubica al
 // final de la copia y sustituye su contenido por la cápsula real.
@@ -13,6 +14,11 @@ static CAPSULE_RESERVED: [u8; 16384] = [0; 16384];
 
 const W: usize = chip8::SCREEN_W * chip8::SCALE;
 const H: usize = chip8::SCREEN_H * chip8::SCALE;
+
+// El reloj del Chip8 no debe depender de los fps que logre minifb.
+const CYCLES_PER_SECOND: f64 = 600.0;
+const TIMER_TICKS_PER_SECOND: f64 = 60.0;
+const MAX_FRAME_SECONDS: f64 = 0.25;
 
 fn map_key(k: Key) -> Option<usize> {
     Some(match k {
@@ -101,8 +107,17 @@ fn run_emulator(path: &Path, reset: bool) {
         }
     };
     let mut screen = vec![0u32; W * H];
+    let mut last_frame = Instant::now();
+    let mut cycle_acc = 0.0f64;
+    let mut tick_acc = 0.0f64;
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
+        let now = Instant::now();
+        let dt = now.duration_since(last_frame).as_secs_f64().min(MAX_FRAME_SECONDS);
+        last_frame = now;
+        cycle_acc += dt * CYCLES_PER_SECOND;
+        tick_acc += dt * TIMER_TICKS_PER_SECOND;
+
         for i in 0..16 {
             chip8.set_key(i, false);
         }
@@ -111,13 +126,27 @@ fn run_emulator(path: &Path, reset: bool) {
                 chip8.set_key(idx, true);
             }
         }
-        for _ in 0..10 {
+
+        let cycles = cycle_acc.floor() as usize;
+        cycle_acc -= cycles as f64;
+        for _ in 0..cycles {
             chip8.step();
         }
-        chip8.tick_timers();
+
+        // El tono se revisa en cada tick: si el sound timer llega a cero a
+        // mitad de un frame con pocos fps, el pitido se corta en ese instante.
         if let Some(beeper) = &mut beeper {
             beeper.set(chip8.state.sound > 0);
         }
+        let ticks = tick_acc.floor() as usize;
+        tick_acc -= ticks as f64;
+        for _ in 0..ticks {
+            chip8.tick_timers();
+            if let Some(beeper) = &mut beeper {
+                beeper.set(chip8.state.sound > 0);
+            }
+        }
+
         chip8.framebuffer(&mut screen);
         if let Err(e) = window.update_with_buffer(&screen, W, H) {
             eprintln!("error de vídeo: {e}");

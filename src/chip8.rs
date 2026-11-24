@@ -329,4 +329,31 @@ mod tests {
             3 * SCALE * SCALE
         );
     }
+
+    #[test]
+    fn timers_tick_once_per_call_and_saturate() {
+        let mut chip = Chip8::new(MachineState::new(&[]));
+        chip.state.delay = 2;
+        chip.state.sound = 2;
+        chip.tick_timers();
+        assert_eq!((chip.state.delay, chip.state.sound), (1, 1));
+        chip.tick_timers();
+        assert_eq!((chip.state.delay, chip.state.sound), (0, 0));
+        chip.tick_timers();
+        assert_eq!((chip.state.delay, chip.state.sound), (0, 0));
+    }
+
+    #[test]
+    fn fx18_sets_sound_timer_for_32_ticks() {
+        // 6A20: V_A = 0x20 | FA18: ST = V_A | 1204: bucle
+        let rom = [0x6a, 0x20, 0xfa, 0x18, 0x12, 0x04];
+        let mut chip = Chip8::new(MachineState::new(&rom));
+        chip.step();
+        chip.step();
+        assert_eq!(chip.state.sound, 0x20);
+        for _ in 0..0x20 {
+            chip.tick_timers();
+        }
+        assert_eq!(chip.state.sound, 0);
+    }
 }
