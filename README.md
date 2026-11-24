@@ -35,15 +35,25 @@ En Linux `minifb` necesita las cabeceras de X11/Wayland y `rodio` las de ALSA
 
 ```sh
 target/release/capsule-chip8 --pack --rom roms/Airplane.ch8 --out roms/airplane.exe
-roms/airplane.exe          # continúa donde se dejó
-roms/airplane.exe --reset  # vuelve al estado de fábrica
+roms/airplane.exe          # abre el menú; JUGAR continúa donde se dejó
+roms/airplane.exe --reset  # aplica el reset y abre el menú
 ```
 
 En Windows el exe generado es una aplicación GUI: al abrirlo no aparece una
 ventana de terminal. `--pack` y la ayuda siguen escribiendo en la consola.
 
-Teclas por defecto: `1234 / qwer / asdf / zxcv`. `Escape` cierra y guarda.
-Pulsa `F1` dentro del juego para abrir la pantalla de controles:
+Al abrir la cápsula aparece un menú:
+
+- `JUGAR`: continúa la partida guardada.
+- `CONTROLES`: abre la pantalla de configuración de botones.
+- `REINICIAR`: vuelve al estado de fábrica y entra al juego.
+- `SALIR`: cierra y guarda.
+
+Navega con `Arriba`/`Abajo` y confirma con `Enter`. `F1` abre `CONTROLES` desde
+el menú o desde el juego; `Escape` cierra y guarda.
+
+Teclas por defecto: `1234 / qwer / asdf / zxcv`.
+En la pantalla de controles:
 
 - `Izquierda`/`Derecha` eligen una de las 16 teclas CHIP-8.
 - `Arriba`/`Abajo` recorren las teclas anfitrionas; también puedes pulsar
@@ -53,8 +63,8 @@ Pulsa `F1` dentro del juego para abrir la pantalla de controles:
   asignar una flecha, usa `Arriba`/`Abajo` hasta que aparezca `UP`, `DN`, `LT`
   o `RT`.
 - Si la tecla ya estaba asignada a otra ranura, se intercambian.
-- `F1` o `Enter` guarda y vuelve al juego. `F1`, `Enter` y `Escape` no se
-  pueden asignar.
+- `F1` o `Enter` guarda y vuelve a la pantalla anterior (menú o juego).
+  `F1`, `Enter` y `Escape` no se pueden asignar.
 
 El mapa se guarda en el propio exe, en posiciones fijas de la cabecera
 `CAPSULE1`: 16 bytes en el offset 36 (uno por tecla CHIP-8) y su CRC32 en el

@@ -29,6 +29,15 @@ const UI_DIM: u32 = 0x0070_7070;
 const UI_SEL: u32 = 0x00f0_c050;
 const UI_PANEL: u32 = 0x0020_2020;
 
+const MENU_ITEMS: [&str; 4] = ["JUGAR", "CONTROLES", "REINICIAR", "SALIR"];
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Screen {
+    Menu,
+    Config,
+    Game,
+}
+
 const HEX: [&str; 16] = [
     "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "A", "B", "C", "D", "E", "F",
 ];
@@ -157,14 +166,41 @@ fn draw_config(out: &mut [u32], keymap: &Keymap, selected: usize) {
     draw_text(out, "F1 SALIR IZQ DER ELEGIR ARR ABA CAMBIA", 40, 288, 2, UI_DIM);
 }
 
+fn draw_menu(out: &mut [u32], selected: usize) {
+    out.fill(UI_BG);
+    draw_text(out, "CAPSULE CHIP8", 40, 20, 5, UI_ON);
+    draw_text(out, "MENU", 40, 70, 3, UI_DIM);
+
+    for (i, label) in MENU_ITEMS.iter().enumerate() {
+        let y = 108 + i * 44;
+        let active = i == selected;
+        let color = if active { UI_SEL } else { UI_ON };
+        if active {
+            fill_rect(out, 32, y - 6, 232, 38, UI_PANEL);
+            border_rect(out, 32, y - 6, 232, 38, UI_SEL);
+        }
+        draw_text(out, label, 48, y, 3, color);
+    }
+
+    draw_text(
+        out,
+        "ARR ABA ELEGIR ENTER ACEPTAR F1 CONTROLES ESC SALIR",
+        40,
+        288,
+        2,
+        UI_DIM,
+    );
+}
+
 /// Devuelve `true` cuando se debe salir de la configuración.
-/// `f1_exit` es un flanco de subida distinto del que abrió la pantalla.
+/// Los flancos de salida deben ser distintos del que abrió la pantalla.
 fn handle_config(
     window: &Window,
     keymap: &mut Keymap,
     selected: &mut usize,
     file: &mut CapsuleFile,
     f1_exit: bool,
+    enter_exit: bool,
 ) -> bool {
     if window.is_key_pressed(Key::Left, KeyRepeat::Yes) {
         *selected = (*selected + 15) % 16;
@@ -195,7 +231,7 @@ fn handle_config(
             break;
         }
     }
-    f1_exit || window.is_key_pressed(Key::Enter, KeyRepeat::No)
+    f1_exit || enter_exit
 }
 
 fn run_emulator(path: &Path, reset: bool) {
@@ -223,10 +259,13 @@ fn run_emulator(path: &Path, reset: bool) {
     file.checkpoint(&state);
     let mut chip8 = Chip8::new(state);
     let mut keymap = file.load_keymap();
-    let mut configuring = false;
+    let mut screen_state = Screen::Menu;
+    let mut config_return = Screen::Menu;
+    let mut menu_item = 0usize;
+    let mut key_selected = 0usize;
     let mut config_just_opened = false;
-    let mut selected = 0usize;
     let mut f1_held = false;
+    let mut enter_held = false;
 
     let mut window = match Window::new("Capsule-CHIP8", W, H, WindowOptions::default()) {
         Ok(w) => w,
@@ -259,58 +298,108 @@ fn run_emulator(path: &Path, reset: bool) {
         let f1_down = window.is_key_down(Key::F1);
         let f1_pressed = f1_down && !f1_held;
         f1_held = f1_down;
+        let enter_down = window.is_key_down(Key::Enter);
+        let enter_pressed = enter_down && !enter_held;
+        enter_held = enter_down;
 
-        if f1_pressed && !configuring {
-            configuring = true;
-            config_just_opened = true;
-        }
-
-        if configuring {
-            let f1_exit = f1_pressed && !config_just_opened;
-            config_just_opened = false;
-            if handle_config(&window, &mut keymap, &mut selected, &mut file, f1_exit) {
-                configuring = false;
-            }
-            if let Some(beeper) = &mut beeper {
-                beeper.set(false);
-            }
-            draw_config(&mut screen, &keymap, selected);
-        } else {
-            cycle_acc += dt * CYCLES_PER_SECOND;
-            tick_acc += dt * TIMER_TICKS_PER_SECOND;
-
-            for i in 0..16 {
-                chip8.set_key(i, false);
-            }
-            for i in 0..16 {
-                if let Some(key) = keymap.host_key(i) {
-                    if window.is_key_down(key) {
-                        chip8.set_key(i, true);
+        match screen_state {
+            Screen::Menu => {
+                if window.is_key_pressed(Key::Up, KeyRepeat::Yes) {
+                    menu_item = (menu_item + MENU_ITEMS.len() - 1) % MENU_ITEMS.len();
+                }
+                if window.is_key_pressed(Key::Down, KeyRepeat::Yes) {
+                    menu_item = (menu_item + 1) % MENU_ITEMS.len();
+                }
+                if f1_pressed {
+                    screen_state = Screen::Config;
+                    config_return = Screen::Menu;
+                    config_just_opened = true;
+                } else if enter_pressed {
+                    match menu_item {
+                        0 => screen_state = Screen::Game,
+                        1 => {
+                            screen_state = Screen::Config;
+                            config_return = Screen::Menu;
+                            config_just_opened = true;
+                        }
+                        2 => {
+                            let fresh = MachineState::new(file.rom());
+                            file.checkpoint(&fresh);
+                            chip8 = Chip8::new(fresh);
+                            screen_state = Screen::Game;
+                        }
+                        3 => break,
+                        _ => unreachable!(),
                     }
                 }
-            }
-
-            let cycles = cycle_acc.floor() as usize;
-            cycle_acc -= cycles as f64;
-            for _ in 0..cycles {
-                chip8.step();
-            }
-
-            // El tono se revisa en cada tick: si el sound timer llega a cero a
-            // mitad de un frame con pocos fps, el pitido se corta en ese instante.
-            if let Some(beeper) = &mut beeper {
-                beeper.set(chip8.state.sound > 0);
-            }
-            let ticks = tick_acc.floor() as usize;
-            tick_acc -= ticks as f64;
-            for _ in 0..ticks {
-                chip8.tick_timers();
                 if let Some(beeper) = &mut beeper {
-                    beeper.set(chip8.state.sound > 0);
+                    beeper.set(false);
+                }
+                draw_menu(&mut screen, menu_item);
+            }
+            Screen::Config => {
+                let f1_exit = f1_pressed && !config_just_opened;
+                let enter_exit = enter_pressed && !config_just_opened;
+                config_just_opened = false;
+                if handle_config(
+                    &window,
+                    &mut keymap,
+                    &mut key_selected,
+                    &mut file,
+                    f1_exit,
+                    enter_exit,
+                ) {
+                    screen_state = config_return;
+                }
+                if let Some(beeper) = &mut beeper {
+                    beeper.set(false);
+                }
+                draw_config(&mut screen, &keymap, key_selected);
+            }
+            Screen::Game => {
+                if f1_pressed {
+                    screen_state = Screen::Config;
+                    config_return = Screen::Game;
+                    config_just_opened = true;
+                } else {
+                    cycle_acc += dt * CYCLES_PER_SECOND;
+                    tick_acc += dt * TIMER_TICKS_PER_SECOND;
+
+                    for i in 0..16 {
+                        chip8.set_key(i, false);
+                    }
+                    for i in 0..16 {
+                        if let Some(key) = keymap.host_key(i) {
+                            if window.is_key_down(key) {
+                                chip8.set_key(i, true);
+                            }
+                        }
+                    }
+
+                    let cycles = cycle_acc.floor() as usize;
+                    cycle_acc -= cycles as f64;
+                    for _ in 0..cycles {
+                        chip8.step();
+                    }
+
+                    // El tono se revisa en cada tick: si el sound timer llega a
+                    // cero a mitad de un frame con pocos fps, el pitido se corta
+                    // en ese instante.
+                    if let Some(beeper) = &mut beeper {
+                        beeper.set(chip8.state.sound > 0);
+                    }
+                    let ticks = tick_acc.floor() as usize;
+                    tick_acc -= ticks as f64;
+                    for _ in 0..ticks {
+                        chip8.tick_timers();
+                        if let Some(beeper) = &mut beeper {
+                            beeper.set(chip8.state.sound > 0);
+                        }
+                    }
+
+                    chip8.framebuffer(&mut screen);
                 }
             }
-
-            chip8.framebuffer(&mut screen);
         }
 
         if let Err(e) = window.update_with_buffer(&screen, W, H) {
@@ -350,7 +439,7 @@ fn main() {
     #[cfg(target_os = "windows")]
     ensure_console();
     println!(
-        "capsule-chip8\n\nGenerar una cápsula:\n  {} --pack --rom roms/Airplane.ch8 --out juego.exe\n\nEjecutar una cápsula:\n  juego.exe [--reset]  (F1 configura los controles)\n",
+        "capsule-chip8\n\nGenerar una cápsula:\n  {} --pack --rom roms/Airplane.ch8 --out juego.exe\n\nEjecutar una cápsula:\n  juego.exe [--reset]  (menú al abrir; F1 configura los controles)\n",
         PathBuf::from("capsule-chip8").display()
     );
 }
