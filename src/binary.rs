@@ -1,8 +1,7 @@
 //! Lectura y parcheo mínimo de cabeceras PE y ELF64.
 //!
-//! El emulador nunca usa estas secciones mapeadas en memoria: abre su propio
-//! fichero y lee los bytes directamente. Aquí solo necesitamos localizar las
-//! secciones `.capsule` y `.disk`, y saber crecer la segunda.
+//! El emulador nunca usa la sección mapeada en memoria: abre su propio fichero
+//! y lee los bytes directamente. Aquí solo necesitamos localizar `.capsule`.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Format {
@@ -15,8 +14,6 @@ pub struct SectionInfo {
     pub name: String,
     pub raw_offset: usize,
     pub raw_size: usize,
-    pub virt_size: usize,
-    pub virt_addr: usize,
     pub header_offset: usize,
     pub format: Format,
 }
@@ -98,8 +95,6 @@ pub fn find_section(b: &[u8], wanted: &str) -> Option<SectionInfo> {
                 if name == wanted {
                     return Some(SectionInfo {
                         name,
-                        virt_size: read_u32(b, h + 8)? as usize,
-                        virt_addr: read_u32(b, h + 12)? as usize,
                         raw_size: read_u32(b, h + 16)? as usize,
                         raw_offset: read_u32(b, h + 20)? as usize,
                         header_offset: h,
@@ -138,8 +133,6 @@ pub fn find_section(b: &[u8], wanted: &str) -> Option<SectionInfo> {
                         name,
                         raw_offset: read_u64(b, h + 24)? as usize,
                         raw_size: read_u64(b, h + 32)? as usize,
-                        virt_size: read_u64(b, h + 32)? as usize,
-                        virt_addr: 0,
                         header_offset: h,
                         format: Format::Elf,
                     });
@@ -165,21 +158,13 @@ pub fn pad_to_alignment(b: &mut Vec<u8>, align: usize) {
 }
 
 /// Reposiciona y redimensiona una sección existente.
-pub fn set_section(
-    b: &mut Vec<u8>,
-    info: &SectionInfo,
-    raw_offset: usize,
-    raw_size: usize,
-    virt_size: usize,
-) {
+pub fn set_section(b: &mut Vec<u8>, info: &SectionInfo, raw_offset: usize, raw_size: usize) {
     match info.format {
         Format::Pe => {
             // VirtualSize NO se toca: debe seguir cuadrando con la VA de la
-            // siguiente sección o Windows rechaza la imagen. SizeOfRawData
-            // puede ser mayor o menor que VirtualSize sin problema.
+            // siguiente sección o Windows rechaza la imagen.
             write_u32(b, info.header_offset + 16, raw_size as u32);
             write_u32(b, info.header_offset + 20, raw_offset as u32);
-            let _ = virt_size;
             let pe = pe_offset(b).unwrap();
             write_u32(b, pe + 24 + 64, 0);
         }
@@ -188,27 +173,4 @@ pub fn set_section(
             write_u64(b, info.header_offset + 32, raw_size as u64);
         }
     }
-}
-
-/// Crece la sección de disco: añade bytes al final del fichero y actualiza
-/// únicamente los campos de esa sección (y `SizeOfImage` en PE).
-pub fn grow_section(b: &mut Vec<u8>, name: &str, delta: usize) -> Option<usize> {
-    let info = find_section(b, name)?;
-    let align = file_alignment(b).unwrap_or(512);
-    let extra = align_up(delta, align);
-    let start = align_up(b.len(), align);
-    b.resize(start + extra, 0);
-
-    match info.format {
-        Format::Pe => {
-            let new_raw = info.raw_size + extra;
-            write_u32(b, info.header_offset + 16, new_raw as u32);
-            let pe = pe_offset(b)?;
-            write_u32(b, pe + 24 + 64, 0);
-        }
-        Format::Elf => {
-            write_u64(b, info.header_offset + 32, (info.raw_size + extra) as u64);
-        }
-    }
-    Some(start)
 }

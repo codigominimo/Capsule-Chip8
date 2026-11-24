@@ -1,16 +1,4 @@
-//! Intérprete CHIP-8 con E/S de disco mapeada en 0x100..=0x113.
-
-use crate::capsule::CapsuleFile;
-
-pub const DISK_IO_BASE: u16 = 0x100;
-pub const DISK_BUFFER: usize = 0x102;
-pub const DISK_COMMAND: usize = 0x112;
-pub const DISK_STATUS: usize = 0x113;
-
-pub const CMD_READ: u8 = 1;
-pub const CMD_WRITE: u8 = 2;
-pub const CMD_SIZE: u8 = 3;
-pub const CMD_GROW: u8 = 4;
+//! Intérprete CHIP-8 estándar, sin extensiones de E/S.
 
 const FONTS: [u8; 80] = [
     0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
@@ -70,17 +58,15 @@ pub struct Chip8 {
     pub keys: [bool; 16],
     waiting: Option<u8>,
     rng: u32,
-    pub disk: CapsuleFile,
 }
 
 impl Chip8 {
-    pub fn new(state: MachineState, disk: CapsuleFile) -> Self {
+    pub fn new(state: MachineState) -> Self {
         Self {
             state,
             keys: [false; 16],
             waiting: None,
             rng: 0x9e3779b9,
-            disk,
         }
     }
 
@@ -113,52 +99,11 @@ impl Chip8 {
     }
 
     fn read_mem(&self, a: usize) -> u8 {
-        if a == DISK_STATUS {
-            return self.state.ram[DISK_STATUS];
-        }
         self.state.ram[a]
     }
 
-    pub fn write_mem(&mut self, a: usize, val: u8) {
-        if a == DISK_COMMAND {
-            self.disk_command(val);
-        } else {
-            self.state.ram[a] = val;
-        }
-    }
-
-    fn disk_command(&mut self, cmd: u8) {
-        let sector = u16::from_le_bytes([self.state.ram[0x100], self.state.ram[0x101]]) as usize;
-        let status = match cmd {
-            CMD_READ => match self.disk.read_sector(sector) {
-                Some(data) => {
-                    self.state.ram[DISK_BUFFER..DISK_BUFFER + 16].copy_from_slice(&data);
-                    0
-                }
-                None => 0xff,
-            },
-            CMD_WRITE => {
-                let mut data = [0u8; 16];
-                data.copy_from_slice(&self.state.ram[DISK_BUFFER..DISK_BUFFER + 16]);
-                match self.disk.write_sector(sector, &data, &self.state) {
-                    true => 0,
-                    false => 0xff,
-                }
-            }
-            CMD_SIZE => {
-                let sectors = (self.disk.disk_len() / 16) as u16;
-                let b = sectors.to_le_bytes();
-                self.state.ram[DISK_BUFFER] = b[0];
-                self.state.ram[DISK_BUFFER + 1] = b[1];
-                0
-            }
-            CMD_GROW => match self.disk.grow(&self.state) {
-                true => 0,
-                false => 0xff,
-            },
-            _ => 0xff,
-        };
-        self.state.ram[DISK_STATUS] = status;
+    fn write_mem(&mut self, a: usize, val: u8) {
+        self.state.ram[a] = val;
     }
 
     pub fn step(&mut self) {

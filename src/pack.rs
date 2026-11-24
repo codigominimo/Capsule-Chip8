@@ -1,6 +1,6 @@
 //! Inyecta un ROM y una cápsula nueva en una copia de este propio executable.
 
-use crate::binary::{self, pad_to_alignment};
+use crate::binary;
 use crate::capsule;
 use std::path::Path;
 
@@ -13,18 +13,13 @@ pub fn pack(rom_path: &Path, template: &Path, out: &Path) -> Result<usize, Strin
 
     let cap = binary::find_section(&exe, ".capsule")
         .ok_or_else(|| "el exe no tiene sección .capsule".to_string())?;
-    let disk = binary::find_section(&exe, ".disk")
-        .ok_or_else(|| "el exe no tiene sección .disk".to_string())?;
     let align = binary::file_alignment(&exe).unwrap_or(512);
 
-    let (mut cap_blob, mut disk_blob) = capsule::initial_image(&rom, capsule::DISK_CHUNK);
-    pad_to_alignment(&mut cap_blob, align);
-    pad_to_alignment(&mut disk_blob, align);
+    let mut cap_blob = capsule::initial_image(&rom);
+    binary::pad_to_alignment(&mut cap_blob, align);
 
     let cap_off = binary::append_blob(&mut exe, &cap_blob);
-    let disk_off = binary::append_blob(&mut exe, &disk_blob);
-    binary::set_section(&mut exe, &cap, cap_off, cap_blob.len(), cap_blob.len());
-    binary::set_section(&mut exe, &disk, disk_off, disk_blob.len(), disk_blob.len());
+    binary::set_section(&mut exe, &cap, cap_off, cap_blob.len());
 
     std::fs::write(out, &exe).map_err(|e| format!("no puedo escribir la salida: {e}"))?;
     #[cfg(unix)]

@@ -1,9 +1,9 @@
-//! Verificación headless: comandos de disco, persistencia y crecimiento real.
+//! Verificación headless: el estado de la máquina persiste en el exe.
 //! Uso: cargo run --release --example selftest -- <exe generado>
 
 use capsule_core::capsule::CapsuleFile;
-use capsule_core::chip8::{CMD_GROW, CMD_READ, CMD_SIZE, CMD_WRITE, Chip8};
-use std::path::{Path, PathBuf};
+use capsule_core::chip8::Chip8;
+use std::path::PathBuf;
 
 fn main() {
     let path = PathBuf::from(
@@ -11,55 +11,55 @@ fn main() {
             .nth(1)
             .expect("falta la ruta del exe generado"),
     );
-    let file = CapsuleFile::open(&path).expect("no puedo abrir la cápsula");
-    let state = file.load_state();
-    println!("ROM: {} bytes, disco: {} bytes", file.rom().len(), file.disk_len());
-    let initial_sectors = (file.disk_len() / 16) as u16;
-    let mut chip = Chip8::new(state, file);
+    let size_before = std::fs::metadata(&path).unwrap().len();
 
-    let expected: [u8; 16] = core::array::from_fn(|i| (i as u8).wrapping_mul(7).wrapping_add(1));
-    chip.write_mem(0x100, 0);
-    chip.write_mem(0x101, 0);
-    for (i, b) in expected.iter().enumerate() {
-        chip.write_mem(0x102 + i, *b);
-    }
-    chip.write_mem(0x112, CMD_WRITE);
-    assert_eq!(chip.state.ram[0x113], 0, "CMD_WRITE falló");
+    let mut file = CapsuleFile::open(&path).expect("no puedo abrir la cápsula");
+    println!("ROM: {} bytes", file.rom().len());
 
-    chip.write_mem(0x112, CMD_SIZE);
-    assert_eq!(
-        u16::from_le_bytes([chip.state.ram[0x102], chip.state.ram[0x103]]),
-        initial_sectors,
-        "CMD_SIZE debe devolver el número de sectores"
+    let mut chip = Chip8::new(file.load_state());
+    chip.state.v[0] = 0xab;
+    chip.state.v[0xf] = 0x5a;
+    chip.state.pc = 0x234;
+    chip.state.i = 0x3a1;
+    chip.state.sp = 2;
+    chip.state.stack[2] = 0x456;
+    chip.state.delay = 17;
+    chip.state.sound = 9;
+    chip.state.ram[0x300] = 0x7e;
+    chip.state.gfx[17] = true;
+    chip.state.gfx[42] = true;
+    file.checkpoint(&chip.state);
+
+    let again = CapsuleFile::open(&path).expect("la cápsula quedó corrupta");
+    let s = again.load_state();
+    assert_eq!(s.v[0], 0xab);
+    assert_eq!(s.v[0xf], 0x5a);
+    assert_eq!(s.pc, 0x234);
+    assert_eq!(s.i, 0x3a1);
+    assert_eq!(s.sp, 2);
+    assert_eq!(s.stack[2], 0x456);
+    assert_eq!(s.delay, 17);
+    assert_eq!(s.sound, 9);
+    assert_eq!(s.ram[0x300], 0x7e);
+    assert!(s.gfx[17] && s.gfx[42]);
+    assert!(!s.gfx[18], "píxel no escrito debe seguir apagado");
+
+    // Segundo checkpoint: debe usar el snapshot alterno sin perder nada.
+    chip.state.v[1] = 0xcd;
+    chip.state.ram[0x301] = 0x11;
+    file.checkpoint(&chip.state);
+    let again = CapsuleFile::open(&path).expect("la cápsula quedó corrupta");
+    let s = again.load_state();
+    assert_eq!(s.v[0], 0xab);
+    assert_eq!(s.v[1], 0xcd);
+    assert_eq!(s.ram[0x300], 0x7e);
+    assert_eq!(s.ram[0x301], 0x11);
+
+    let size_after = std::fs::metadata(&path).unwrap().len();
+    assert_eq!(size_before, size_after, "el exe no debe crecer sin disco");
+
+    println!(
+        "OK: estado persistido (registros, RAM, stack, timers y GFX), snapshots alternos válidos, exe {} bytes sin cambios",
+        size_after
     );
-
-    chip.write_mem(0x100, 0);
-    chip.write_mem(0x101, 0);
-    for i in 0..16 {
-        chip.write_mem(0x102 + i, 0);
-    }
-    chip.write_mem(0x112, CMD_READ);
-    assert_eq!(chip.state.ram[0x113], 0, "CMD_READ falló");
-    assert_eq!(&chip.state.ram[0x102..0x112], &expected, "el sector leído no coincide");
-
-    let before = file_size(&path);
-    chip.write_mem(0x112, CMD_GROW);
-    assert_eq!(chip.state.ram[0x113], 0, "CMD_GROW falló");
-    let after = file_size(&path);
-    assert!(after > before, "el exe no creció físicamente");
-
-    drop(chip);
-    let again = CapsuleFile::open(&path).expect("la cápsula quedó corrupta tras crecer");
-    assert_eq!(
-        again.disk_len(),
-        (initial_sectors as usize + 256) * 16,
-        "el disco no creció un chunk"
-    );
-    assert_eq!(again.read_sector(0).unwrap(), expected, "el dato no persistió");
-
-    println!("OK: disco {before} -> {after} bytes, sector 0 persistido, snapshot válido");
-}
-
-fn file_size(p: &Path) -> u64 {
-    std::fs::metadata(p).unwrap().len()
 }

@@ -5,15 +5,11 @@ use capsule_core::{launcher, lock, pack};
 use minifb::{Key, Window, WindowOptions};
 use std::path::{Path, PathBuf};
 
-// Espacio reservado para que el linker cree las secciones. `--pack` las
-// reubica al final de la copia y sustituye su contenido.
+// Espacio reservado para que el linker cree la sección. `--pack` la reubica al
+// final de la copia y sustituye su contenido por la cápsula real.
 #[used]
 #[unsafe(link_section = ".capsule")]
 static CAPSULE_RESERVED: [u8; 16384] = [0; 16384];
-
-#[used]
-#[unsafe(link_section = ".disk")]
-static DISK_RESERVED: [u8; 16384] = [0; 16384];
 
 const SCALE: usize = 10;
 const W: usize = 64 * SCALE;
@@ -57,7 +53,7 @@ fn do_pack(args: &[String]) {
     };
     let exe = std::env::current_exe().expect("no puedo resolver la ruta del exe");
     match pack::pack(Path::new(&rom), &exe, Path::new(&out)) {
-        Ok(size) => println!("cápsula creada: {out} ({size} bytes, disco inicial 4096 bytes)"),
+        Ok(size) => println!("cápsula creada: {out} ({size} bytes)"),
         Err(e) => {
             eprintln!("capsule-chip8: {e}");
             std::process::exit(1);
@@ -74,7 +70,7 @@ fn run_emulator(path: &Path, reset: bool) {
         }
     };
 
-    let file = match CapsuleFile::open(path) {
+    let mut file = match CapsuleFile::open(path) {
         Ok(f) => f,
         Err(e) => {
             eprintln!("cápsula inválida: {e}");
@@ -86,7 +82,9 @@ fn run_emulator(path: &Path, reset: bool) {
     } else {
         file.load_state()
     };
-    let mut chip8 = Chip8::new(state, file);
+    // Así `--reset` queda guardado aunque se cierre antes del primer frame.
+    file.checkpoint(&state);
+    let mut chip8 = Chip8::new(state);
 
     let mut window = match Window::new("Capsule-CHIP8", W, H, WindowOptions::default()) {
         Ok(w) => w,
@@ -126,12 +124,12 @@ fn run_emulator(path: &Path, reset: bool) {
             eprintln!("error de vídeo: {e}");
             break;
         }
-        chip8.disk.checkpoint(&chip8.state);
+        file.checkpoint(&chip8.state);
     }
     if let Some(beeper) = &mut beeper {
         beeper.set(false);
     }
-    chip8.disk.checkpoint(&chip8.state);
+    file.checkpoint(&chip8.state);
 }
 
 fn main() {
