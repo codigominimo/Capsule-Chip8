@@ -1,3 +1,5 @@
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+
 use capsule_core::audio::Beeper;
 use capsule_core::capsule::CapsuleFile;
 use capsule_core::chip8::{self, Chip8, MachineState};
@@ -19,6 +21,24 @@ const H: usize = chip8::SCREEN_H * chip8::SCALE;
 const CYCLES_PER_SECOND: f64 = 600.0;
 const TIMER_TICKS_PER_SECOND: f64 = 60.0;
 const MAX_FRAME_SECONDS: f64 = 0.25;
+
+/// `--pack` y la ayuda se ejecutan desde un terminal; el juego, no.
+/// El binario es subsistema Windows, así que hay que recuperar la consola
+/// del padre solo en esos casos.
+#[cfg(target_os = "windows")]
+fn ensure_console() {
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn AttachConsole(process_id: u32) -> i32;
+        fn AllocConsole() -> i32;
+    }
+    const ATTACH_PARENT_PROCESS: u32 = u32::MAX;
+    unsafe {
+        if AttachConsole(ATTACH_PARENT_PROCESS) == 0 {
+            AllocConsole();
+        }
+    }
+}
 
 fn map_key(k: Key) -> Option<usize> {
     Some(match k {
@@ -162,7 +182,12 @@ fn run_emulator(path: &Path, reset: bool) {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    let exe = std::env::current_exe().expect("no puedo resolver la ruta del exe");
+    let is_capsule = CapsuleFile::open(&exe).is_ok();
+
     if args.iter().any(|a| a == "--pack") {
+        #[cfg(target_os = "windows")]
+        ensure_console();
         do_pack(&args);
         return;
     }
@@ -172,13 +197,15 @@ fn main() {
         return;
     }
 
-    let exe = std::env::current_exe().expect("no puedo resolver la ruta del exe");
-    if CapsuleFile::open(&exe).is_ok() {
+    if is_capsule {
         launcher::relaunch_if_needed();
+        return;
     }
 
+    #[cfg(target_os = "windows")]
+    ensure_console();
     println!(
-        "capsule-chip8\n\nGenerar una cápsula:\n  {} --pack --rom roma.ch8 --out juego.exe\n\nEjecutar una cápsula:\n  juego.exe [--reset]\n",
+        "capsule-chip8\n\nGenerar una cápsula:\n  {} --pack --rom roms/Airplane.ch8 --out juego.exe\n\nEjecutar una cápsula:\n  juego.exe [--reset]\n",
         PathBuf::from("capsule-chip8").display()
     );
 }

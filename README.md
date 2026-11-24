@@ -39,6 +39,9 @@ roms/airplane.exe          # continúa donde se dejó
 roms/airplane.exe --reset  # vuelve al estado de fábrica
 ```
 
+En Windows el exe generado es una aplicación GUI: al abrirlo no aparece una
+ventana de terminal. `--pack` y la ayuda siguen escribiendo en la consola.
+
 Teclas: `1234 / qwer / asdf / zxcv`. `Escape` cierra y guarda. Cuando el sound
 timer del Chip8 es mayor que cero suena un tono de 440 Hz; se apaga en cuanto
 llega a cero. Si no hay dispositivo de audio, el emulador sigue corriendo sin
